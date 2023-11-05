@@ -41,6 +41,7 @@ import platform
 import pwd
 import random
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -1419,16 +1420,34 @@ def get_init_system(comm_file="/proc/1/comm"):
     return init_system
 
 
-def check_network_target(fs_id):
-    with open(os.devnull, "w") as devnull:
-        rc = subprocess.call(
-            ["systemctl", "is-active", "network.target"],
-            stdout=devnull,
-            stderr=devnull,
-            close_fds=True,
-        )
+def check_network_target(fs_id, check_network=True, timeout=15):
+    if not check_network:
+        return
 
-    if rc != 0:
+    if not subprocess.run([
+            "/usr/bin/systemctl",
+            "is-enabled",
+            "--quiet",
+            "systemd-networkd",
+    ]).returncode and (command := shutil.which(
+        "/usr/lib/systemd/systemd-networkd-wait-online")):
+        args = [command, "--quiet", f"--timeout={timeout}"]
+    elif not subprocess.run([
+            "/usr/bin/systemctl",
+            "is-enabled",
+            "--quiet",
+            "NetworkManager",
+    ]).returncode and (command := shutil.which("/usr/bin/nm-online")):
+        args = [
+            command,
+            "--quiet",
+            f"--timeout={timeout}",
+            "--wait-for-startup",
+        ]
+    else:
+        args = ["/usr/bin/systemctl", "is-active", "network.target"]
+
+    if subprocess.run(args).returncode:
         # For fstab mount, the exit code 0 below is to avoid non-zero exit status causing instance to fail the
         # local-fs.target boot up and then fail the network setup failure can result in the instance being unresponsive.
         # https://docs.amazonaws.cn/en_us/efs/latest/ug/troubleshooting-efs-mounting.html#automount-fails
